@@ -1,22 +1,18 @@
-import Vue from 'vue'
+import { defineComponent, nextTick } from 'vue'
 import { mapActions } from 'vuex'
 import FtCard from '../ft-card/ft-card.vue'
-import FtButton from '../ft-button/ft-button.vue'
-import FtListDropdown from '../ft-list-dropdown/ft-list-dropdown.vue'
-import FtFlexBox from '../ft-flex-box/ft-flex-box.vue'
 import FtIconButton from '../ft-icon-button/ft-icon-button.vue'
 import FtShareButton from '../ft-share-button/ft-share-button.vue'
-import { MAIN_PROFILE_ID } from '../../../constants'
+import FtSubscribeButton from '../FtSubscribeButton/FtSubscribeButton.vue'
+import { formatNumber, openExternalLink, showToast } from '../../helpers/utils'
 
-export default Vue.extend({
+export default defineComponent({
   name: 'WatchVideoInfo',
   components: {
     'ft-card': FtCard,
-    'ft-button': FtButton,
-    'ft-list-dropdown': FtListDropdown,
-    'ft-flex-box': FtFlexBox,
     'ft-icon-button': FtIconButton,
-    'ft-share-button': FtShareButton
+    'ft-share-button': FtShareButton,
+    'ft-subscribe-button': FtSubscribeButton
   },
   props: {
     id: {
@@ -43,9 +39,13 @@ export default Vue.extend({
       type: Number,
       required: true
     },
+    premiereDate: {
+      type: Date,
+      default: undefined
+    },
     viewCount: {
       type: Number,
-      required: true
+      default: null
     },
     subscriptionCountText: {
       type: String,
@@ -79,10 +79,6 @@ export default Vue.extend({
       type: Array,
       required: true
     },
-    watchingPlaylist: {
-      type: Boolean,
-      required: true
-    },
     playlistId: {
       type: String,
       default: null
@@ -103,10 +99,6 @@ export default Vue.extend({
       type: Function,
       required: true
     },
-    theatrePossible: {
-      type: Boolean,
-      required: true
-    },
     lengthSeconds: {
       type: Number,
       required: true
@@ -114,41 +106,28 @@ export default Vue.extend({
     videoThumbnail: {
       type: String,
       required: true
+    },
+    inUserPlaylist: {
+      type: Boolean,
+      required: true
+    },
+    isUnlisted: {
+      type: Boolean,
+      required: false
     }
   },
-  data: function () {
-    return {
-      formatTypeLabel: 'VIDEO FORMATS',
-      formatTypeValues: [
-        'dash',
-        'legacy',
-        'audio'
-      ]
-    }
-  },
+  emits: ['change-format', 'pause-player', 'set-info-area-sticky', 'scroll-to-info-area'],
   computed: {
-    currentInvidiousInstance: function () {
-      return this.$store.getters.getCurrentInvidiousInstance
+    hideSharingActions: function() {
+      return this.$store.getters.getHideSharingActions
+    },
+
+    hideUnsubscribeButton: function() {
+      return this.$store.getters.getHideUnsubscribeButton
     },
 
     currentLocale: function () {
-      return this.$store.getters.getCurrentLocale
-    },
-
-    profileList: function () {
-      return this.$store.getters.getProfileList
-    },
-
-    activeProfile: function () {
-      return this.$store.getters.getActiveProfile
-    },
-
-    hideRecommendedVideos: function () {
-      return this.$store.getters.getHideRecommendedVideos
-    },
-
-    hideLiveChat: function () {
-      return this.$store.getters.getHideLiveChat
+      return this.$i18n.locale
     },
 
     hideVideoLikesAndDislikes: function () {
@@ -159,39 +138,37 @@ export default Vue.extend({
       return this.$store.getters.getHideVideoViews
     },
 
-    favoritesPlaylist: function () {
-      return this.$store.getters.getFavorites
+    showPlaylists: function () {
+      return !this.$store.getters.getHidePlaylists
     },
 
-    inFavoritesPlaylist: function () {
-      const index = this.favoritesPlaylist.videos.findIndex((video) => {
-        return video.videoId === this.id
-      })
-
-      return index !== -1
-    },
-
-    favoriteIconTheme: function () {
-      return this.inFavoritesPlaylist ? 'base favorite' : 'base'
-    },
-
-    downloadLinkNames: function () {
+    downloadLinkOptions: function () {
       return this.downloadLinks.map((download) => {
-        return download.label
+        return {
+          label: download.label,
+          value: download.url
+        }
       })
     },
 
-    downloadLinkValues: function () {
-      return this.downloadLinks.map((download) => {
-        return download.url
-      })
+    downloadBehavior: function () {
+      return this.$store.getters.getDownloadBehavior
     },
 
-    formatTypeNames: function () {
+    formatTypeOptions: function () {
       return [
-        this.$t('Change Format.Use Dash Formats').toUpperCase(),
-        this.$t('Change Format.Use Legacy Formats').toUpperCase(),
-        this.$t('Change Format.Use Audio Formats').toUpperCase()
+        {
+          label: this.$t('Change Format.Use Dash Formats').toUpperCase(),
+          value: 'dash'
+        },
+        {
+          label: this.$t('Change Format.Use Legacy Formats').toUpperCase(),
+          value: 'legacy'
+        },
+        {
+          label: this.$t('Change Format.Use Audio Formats').toUpperCase(),
+          value: 'audio'
+        }
       ]
     },
 
@@ -204,8 +181,7 @@ export default Vue.extend({
         return null
       }
 
-      const locale = this.currentLocale.replace('_', '-')
-      return this.likeCount.toLocaleString([locale, 'en'])
+      return formatNumber(this.likeCount)
     },
 
     parsedDislikeCount: function () {
@@ -213,8 +189,7 @@ export default Vue.extend({
         return null
       }
 
-      const locale = this.currentLocale.replace('_', '-')
-      return this.dislikeCount.toLocaleString([locale, 'en'])
+      return formatNumber(this.dislikeCount)
     },
 
     likePercentageRatio: function () {
@@ -222,41 +197,22 @@ export default Vue.extend({
     },
 
     parsedViewCount: function () {
-      if (this.hideVideoViews) {
+      if (this.hideVideoViews || this.viewCount == null) {
         return null
       }
-      return this.viewCount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ` ${this.$t('Video.Views').toLowerCase()}`
+
+      return this.$tc('Global.Counts.View Count', this.viewCount, { count: formatNumber(this.viewCount) })
     },
 
-    isSubscribed: function () {
-      const subIndex = this.activeProfile.subscriptions.findIndex((channel) => {
-        return channel.id === this.channelId
-      })
-
-      if (subIndex === -1) {
-        return false
-      } else {
-        return true
-      }
-    },
-
-    subscribedText: function () {
-      if (this.isSubscribed) {
-        return `${this.$t('Channel.Unsubscribe').toUpperCase()} ${this.subscriptionCountText}`
-      } else {
-        return `${this.$t('Channel.Subscribe').toUpperCase()} ${this.subscriptionCountText}`
-      }
-    },
-
-    dateString() {
+    dateString: function () {
       const date = new Date(this.published)
-      const locale = this.currentLocale.replace('_', '-')
-      const localeDateString = new Intl.DateTimeFormat([locale, 'en'], { dateStyle: 'medium' }).format(date)
-      return `${localeDateString}`
+      const localeDateString = new Intl.DateTimeFormat([this.currentLocale, 'en'], { dateStyle: 'medium' }).format(date)
+      // replace spaces with no break spaces to make the date act as a single entity while wrapping
+      return `${localeDateString}`.replaceAll(' ', '\u00A0')
     },
 
-    publishedString() {
-      if (this.isLiveContent && this.isLive) {
+    publishedString: function () {
+      if (this.isLive) {
         return this.$t('Video.Started streaming on')
       } else if (this.isLiveContent && !this.isLive) {
         return this.$t('Video.Streamed on')
@@ -271,11 +227,43 @@ export default Vue.extend({
 
     defaultPlayback: function () {
       return this.$store.getters.getDefaultPlayback
-    }
+    },
+
+    quickBookmarkPlaylist() {
+      return this.$store.getters.getQuickBookmarkPlaylist
+    },
+    isQuickBookmarkEnabled() {
+      return this.quickBookmarkPlaylist != null
+    },
+    isInQuickBookmarkPlaylist: function () {
+      if (!this.isQuickBookmarkEnabled) { return false }
+
+      // Accessing a reactive property has a negligible amount of overhead,
+      // however as we know that some users have playlists that have more than 10k items in them
+      // it adds up quickly. So create a temporary variable outside of the array, so we only have to do it once.
+      // Also the search is retriggered every time any playlist is modified.
+      const id = this.id
+
+      return this.quickBookmarkPlaylist.videos.some((video) => {
+        return video.videoId === id
+      })
+    },
+    quickBookmarkIconText: function () {
+      if (!this.isQuickBookmarkEnabled) { return false }
+
+      const translationProperties = {
+        playlistName: this.quickBookmarkPlaylist.playlistName,
+      }
+      return this.isInQuickBookmarkPlaylist
+        ? this.$t('User Playlists.Remove from Favorites', translationProperties)
+        : this.$t('User Playlists.Add to Favorites', translationProperties)
+    },
+    quickBookmarkIconTheme: function () {
+      return this.isInQuickBookmarkPlaylist ? 'base favorite' : 'base'
+    },
   },
   mounted: function () {
     if ('mediaSession' in navigator) {
-      /* eslint-disable-next-line */
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title,
         artist: this.channelName,
@@ -287,175 +275,147 @@ export default Vue.extend({
           }
         ]
       })
+
+      this.$watch('$refs.downloadButton.dropdownShown', (dropdownShown) => {
+        this.$emit('set-info-area-sticky', !dropdownShown)
+
+        if (dropdownShown && window.innerWidth >= 901) {
+          // adds a slight delay so we know that the dropdown has shown up
+          // and won't mess up our scrolling
+          nextTick(() => {
+            this.$emit('scroll-to-info-area')
+          })
+        }
+      })
     }
   },
   methods: {
     handleExternalPlayer: function () {
       this.$emit('pause-player')
 
-      this.openInExternalPlayer({
-        strings: this.$t('Video.External Player'),
+      const payload = {
         watchProgress: this.getTimestamp(),
         playbackRate: this.defaultPlayback,
         videoId: this.id,
+        videoLength: this.lengthSeconds,
         playlistId: this.playlistId,
         playlistIndex: this.getPlaylistIndex(),
         playlistReverse: this.getPlaylistReverse(),
         playlistShuffle: this.getPlaylistShuffle(),
-        playlistLoop: this.getPlaylistLoop()
-      })
+        playlistLoop: this.getPlaylistLoop(),
+      }
+      // Only play video in non playlist mode when user playlist detected
+      if (this.inUserPlaylist) {
+        Object.assign(payload, {
+          playlistId: null,
+          playlistIndex: null,
+          playlistReverse: null,
+          playlistShuffle: null,
+          playlistLoop: null,
+        })
+      }
+      this.openInExternalPlayer(payload)
     },
 
-    goToChannel: function () {
-      this.$router.push({ path: `/channel/${this.channelId}` })
-    },
+    handleDownload: function (index) {
+      const selectedDownloadLinkOption = this.downloadLinkOptions[index]
+      const url = selectedDownloadLinkOption.value
+      const linkName = selectedDownloadLinkOption.label
+      const extension = this.grabExtensionFromUrl(linkName)
 
-    toggleSave: function () {
-      if (this.inFavoritesPlaylist) {
-        this.removeFromPlaylist()
+      if (this.downloadBehavior === 'open') {
+        openExternalLink(url)
       } else {
-        this.addToPlaylist()
+        this.downloadMedia({
+          url: url,
+          title: this.title,
+          extension: extension
+        })
       }
     },
 
-    handleSubscription: function () {
-      if (this.channelId === '') {
-        return
+    grabExtensionFromUrl: function (url) {
+      const regex = /\/(\w*)/i
+      const group = url.match(regex)
+      if (group.length === 0) {
+        return ''
       }
-
-      const currentProfile = JSON.parse(JSON.stringify(this.activeProfile))
-      const primaryProfile = JSON.parse(JSON.stringify(this.profileList[0]))
-
-      if (this.isSubscribed) {
-        currentProfile.subscriptions = currentProfile.subscriptions.filter((channel) => {
-          return channel.id !== this.channelId
-        })
-
-        this.updateProfile(currentProfile)
-        this.showToast({
-          message: this.$t('Channel.Channel has been removed from your subscriptions')
-        })
-
-        if (this.activeProfile._id === MAIN_PROFILE_ID) {
-          // Check if a subscription exists in a different profile.
-          // Remove from there as well.
-          let duplicateSubscriptions = 0
-
-          this.profileList.forEach((profile) => {
-            if (profile._id === MAIN_PROFILE_ID) {
-              return
-            }
-            const parsedProfile = JSON.parse(JSON.stringify(profile))
-            const index = parsedProfile.subscriptions.findIndex((channel) => {
-              return channel.id === this.channelId
-            })
-
-            if (index !== -1) {
-              duplicateSubscriptions++
-
-              parsedProfile.subscriptions = parsedProfile.subscriptions.filter((x) => {
-                return x.id !== this.channelId
-              })
-
-              this.updateProfile(parsedProfile)
-            }
-          })
-
-          if (duplicateSubscriptions > 0) {
-            const message = this.$t('Channel.Removed subscription from $ other channel(s)')
-            this.showToast({
-              message: message.replace('$', duplicateSubscriptions)
-            })
-          }
-        }
-      } else {
-        const subscription = {
-          id: this.channelId,
-          name: this.channelName,
-          thumbnail: this.channelThumbnail
-        }
-        currentProfile.subscriptions.push(subscription)
-
-        this.updateProfile(currentProfile)
-        this.showToast({
-          message: this.$t('Channel.Added channel to your subscriptions')
-        })
-
-        if (this.activeProfile._id !== MAIN_PROFILE_ID) {
-          const index = primaryProfile.subscriptions.findIndex((channel) => {
-            return channel.id === this.channelId
-          })
-
-          if (index === -1) {
-            primaryProfile.subscriptions.push(subscription)
-            this.updateProfile(primaryProfile)
-          }
-        }
-      }
+      return group[1]
     },
 
-    handleFormatChange: function (format) {
-      switch (format) {
-        case 'dash':
-          this.$parent.enableDashFormat()
-          break
-        case 'legacy':
-          this.$parent.enableLegacyFormat()
-          break
-        case 'audio':
-          this.$parent.enableAudioFormat()
-          break
-      }
-    },
-
-    addToPlaylist: function () {
+    togglePlaylistPrompt: function () {
       const videoData = {
         videoId: this.id,
         title: this.title,
         author: this.channelName,
         authorId: this.channelId,
-        published: '',
         description: this.description,
         viewCount: this.viewCount,
         lengthSeconds: this.lengthSeconds,
-        timeAdded: new Date().getTime(),
-        isLive: false,
-        paid: false,
-        type: 'video'
+        published: this.published,
+        premiereDate: this.premiereDate,
       }
 
-      const payload = {
-        playlistName: 'Favorites',
-        videoData: videoData
-      }
-
-      this.addVideo(payload)
-
-      this.showToast({
-        message: this.$t('Video.Video has been saved')
-      })
+      this.showAddToPlaylistPromptForManyVideos({ videos: [videoData] })
     },
 
-    removeFromPlaylist: function () {
-      const payload = {
-        playlistName: 'Favorites',
-        videoId: this.id
+    toggleQuickBookmarked() {
+      if (!this.isQuickBookmarkEnabled) {
+        // This should be prevented by UI
+        return
       }
 
-      this.removeVideo(payload)
+      if (this.isInQuickBookmarkPlaylist) {
+        this.removeFromQuickBookmarkPlaylist()
+      } else {
+        this.addToQuickBookmarkPlaylist()
+      }
+    },
+    addToQuickBookmarkPlaylist() {
+      const videoData = {
+        videoId: this.id,
+        title: this.title,
+        author: this.channelName,
+        authorId: this.channelId,
+        lengthSeconds: this.lengthSeconds,
+        published: this.published,
+        premiereDate: this.premiereDate,
+      }
 
-      this.showToast({
-        message: this.$t('Video.Video has been removed from your saved list')
+      this.addVideo({
+        _id: this.quickBookmarkPlaylist._id,
+        videoData,
       })
+      // Update playlist's `lastUpdatedAt`
+      this.updatePlaylist({ _id: this.quickBookmarkPlaylist._id })
+
+      // TODO: Maybe show playlist name
+      showToast(this.$t('Video.Video has been saved'))
+    },
+    removeFromQuickBookmarkPlaylist() {
+      this.removeVideo({
+        _id: this.quickBookmarkPlaylist._id,
+        // Remove all playlist items with same videoId
+        videoId: this.id,
+      })
+      // Update playlist's `lastUpdatedAt`
+      this.updatePlaylist({ _id: this.quickBookmarkPlaylist._id })
+
+      // TODO: Maybe show playlist name
+      showToast(this.$t('Video.Video has been removed from your saved list'))
+    },
+
+    changeFormat: function(value) {
+      this.$emit('change-format', value)
     },
 
     ...mapActions([
-      'showToast',
       'openInExternalPlayer',
-      'updateProfile',
+      'downloadMedia',
+      'showAddToPlaylistPromptForManyVideos',
       'addVideo',
+      'updatePlaylist',
       'removeVideo',
-      'openExternalLink'
     ])
   }
 })

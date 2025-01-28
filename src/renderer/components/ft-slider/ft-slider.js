@@ -1,6 +1,6 @@
-import Vue from 'vue'
+import { defineComponent } from 'vue'
 
-export default Vue.extend({
+export default defineComponent({
   name: 'FtSlider',
   props: {
     label: {
@@ -26,8 +26,13 @@ export default Vue.extend({
     valueExtension: {
       type: String,
       default: null
+    },
+    disabled: {
+      type: Boolean,
+      default: false
     }
   },
+  emits: ['change'],
   data: function () {
     return {
       id: '',
@@ -48,8 +53,13 @@ export default Vue.extend({
       this.currentValue = this.defaultValue
     }
   },
-  mounted: function () {
+  created: function () {
     this.id = this._uid
     this.currentValue = this.defaultValue
+  },
+  methods: {
+    change: function () {
+      this.$emit('change', this.currentValue)
+    }
   }
 })
